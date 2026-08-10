@@ -65,7 +65,7 @@ either from image files (`.png`, `.jpg`, `.jpeg`, `.webp`, `.bmp`) or scanned wi
 Step by step guide for moving your existing Google Authenticator accounts into TuFac.
 
 1. **Open Google Authenticator** on your phone.
-2. Go to **Settings → Transfer accounts → Export accounts** (*Settings → Transfer Accounts → Export Accounts*).
+2. Go to **Settings → Transfer accounts → Export accounts**.
 3. Authenticator shows the export codes as QR codes, one screen at a time. **Screenshot every single one** — depending on how many accounts you have, this takes several images (e.g. 3).
 4. **Transfer the screenshots to your computer**, e.g. via AirDrop or USB cable. Avoid sending them by e-mail or chat — the QR codes contain your secrets and should never leave your devices over a network.
 5. In TuFac, open **File → Import from QR Codes...**.
