@@ -28,14 +28,22 @@ echo ==^> Building TuFac...
 call venv\Scripts\python.exe -m PyInstaller ^
     --name "TuFac" ^
     --windowed ^
+    --onefile ^
     --icon "app\resources\app_icon.ico" ^
     --add-data "app\resources;resources" ^
+    --hidden-import "PySide6" ^
+    --hidden-import "PySide6.QtCore" ^
+    --hidden-import "PySide6.QtGui" ^
+    --hidden-import "PySide6.QtWidgets" ^
+    --hidden-import "cv2" ^
+    --hidden-import "zxingcpp" ^
+    --hidden-import "pyotp" ^
     app\tufac.py
 if errorlevel 1 goto :error
 
 echo.
 echo ==^> Build finished.
-echo ==^> Application: dist\TuFac\TuFac.exe
+echo ==^> Application: dist\TuFac.exe
 exit /b 0
 
 :error

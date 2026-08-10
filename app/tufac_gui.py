@@ -1527,14 +1527,14 @@ class TuFacWindow(QMainWindow):
         for group in imported["groups"]:
             if not isinstance(group, dict):
                 continue
-
+        
             group_name = group.get("name", "Unnamed Group")
             accounts = [
                 account
                 for account in group.get("accounts", [])
                 if isinstance(account, dict)
             ]
-
+        
             existing = next(
                 (
                     existing_group
@@ -1543,23 +1543,33 @@ class TuFacWindow(QMainWindow):
                 ),
                 None,
             )
-
+        
             if existing is None:
-                self.data["groups"].append(
-                    {"name": group_name, "accounts": list(accounts)}
-                )
+                # New group - copy everything including color
+                new_group = {
+                    "name": group_name,
+                    "accounts": list(accounts)
+                }
+                if "color" in group:
+                    new_group["color"] = group["color"]
+                self.data["groups"].append(new_group)
                 added_groups += 1
                 added_accounts += len(accounts)
                 continue
-
+        
+            # Existing group - merge accounts and ALWAYS update color from backup
             existing_accounts = existing.setdefault("accounts", [])
             before = len(existing_accounts)
-
+        
             for account in accounts:
                 if account not in existing_accounts:
                     existing_accounts.append(account)
-
+        
             added_accounts += len(existing_accounts) - before
+            
+            # Always update color from backup (overwrite)
+            if "color" in group:
+                existing["color"] = group["color"]
 
         self.save_data()
         self.load_tree()
@@ -1584,32 +1594,44 @@ class TuFacWindow(QMainWindow):
 
     def rebuild_data_from_tree(self):
         groups = []
-    
+        
         for index in range(self.tree.topLevelItemCount()):
             group_item = self.tree.topLevelItem(index)
-    
+            
             accounts = []
-    
+            
             for child_index in range(group_item.childCount()):
                 account_item = group_item.child(child_index)
                 account = account_item.data(0, Qt.ItemDataRole.UserRole)
-    
+                
                 if account is not None:
                     accounts.append(account)
-    
+            
             # Sort accounts alphanumerically by name
             accounts.sort(key=lambda a: a.get("name", "").lower())
-    
-            groups.append(
-                {
-                    "name": group_item.text(0).strip() or "Unnamed Group",
-                    "accounts": accounts,
-                }
-            )
-    
+            
+            group_data = {
+                "name": group_item.text(0).strip() or "Unnamed Group",
+                "accounts": accounts,
+            }
+            
+            # Preserve color if exists
+            color = group_item.data(0, Qt.ItemDataRole.UserRole)
+            if color:
+                group_data["color"] = color
+            
+            groups.append(group_data)
+        
         self.data["groups"] = groups
 
     def after_tree_drop(self):
+        # Save colors from tree items before rebuilding
+        for index in range(self.tree.topLevelItemCount()):
+            group_item = self.tree.topLevelItem(index)
+            color_data = group_item.data(0, Qt.ItemDataRole.UserRole)
+            if color_data and index < len(self.data["groups"]):
+                self.data["groups"][index]["color"] = color_data
+        
         self.rebuild_data_from_tree()
         
         # Re-sort accounts within each group after drag & drop

@@ -181,7 +181,7 @@ def decode_migration_url(value):
             pos = _skip_field(raw, pos, wire)
 
     return {
-        "accounts": accounts,
+        "otp_parameters": accounts,
         "version": version,
         "batch_size": batch_size,
         "batch_index": batch_index,
