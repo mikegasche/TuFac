@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 
 import pyotp
-from config import APP_COPYRIGHT, APP_NAME, APP_VERSION
+from config import APP_COPYRIGHT, APP_NAME, APP_VERSION, GITHUB_LINK
 from crypto import decrypt_backup, is_envelope
 from migration import decode_migration_url
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -301,6 +301,17 @@ class AboutDialog(QDialog):
         copyright_label = QLabel(APP_COPYRIGHT)
         copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(copyright_label)
+
+        github_url = GITHUB_LINK
+        if not github_url.startswith(("http://", "https://")):
+            github_url = "https://" + github_url
+        
+        github_label = QLabel()
+        
+        github_label.setText(f'<a href="{github_url}" style="text-decoration:none;">{GITHUB_LINK}</a>')
+        github_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        github_label.setOpenExternalLinks(True)
+        layout.addWidget(github_label)
 
         layout.addSpacing(14)
 
