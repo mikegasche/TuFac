@@ -12,7 +12,7 @@
 
   <br><br>
   <a href="https://github.com/mikegasche/TuFac/issues">Issues</a> ·
-  <a href="https://github.com/mikegasche/TuFac/blob/main/LICENSE">License</a>
+  <a href="https://github.com/mikegasche/TuFac/blob/master/LICENSE">License</a>
 </div>
 
 ## Features
