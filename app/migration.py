@@ -1,3 +1,27 @@
+# ------------------------------------------------------------------------------
+# Copyright (c) 2026 Michael Gasche
+#
+# TuFac is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# TuFac is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with TuFac. If not, see <https://www.gnu.org/licenses/>.
+# ------------------------------------------------------------------------------
+
+# File:        migration.py
+# Author:      Michael Gasche
+# Created:     2026-08
+# Product:     TuFac
+# Description: Google Authenticator migration URL decoding and encoding.
+
+
 import base64
 import urllib.parse
 
@@ -38,11 +62,7 @@ def _field_varint(number, value):
 
 
 def _field_bytes(number, value):
-    return (
-        _write_varint((number << 3) | 2)
-        + _write_varint(len(value))
-        + value
-    )
+    return _write_varint((number << 3) | 2) + _write_varint(len(value)) + value
 
 
 def _read_field(data, pos):
@@ -53,19 +73,20 @@ def _read_field(data, pos):
 def _skip_field(data, pos, wire_type):
     if wire_type == 0:
         _, pos = _read_varint(data, pos)
-        return pos
-
-    if wire_type == 1:
-        return pos + 8
-
-    if wire_type == 2:
+    elif wire_type == 1:
+        pos += 8
+    elif wire_type == 2:
         length, pos = _read_varint(data, pos)
-        return pos + length
+        pos += length
+    elif wire_type == 5:
+        pos += 4
+    else:
+        raise ValueError("Unsupported protobuf wire type")
 
-    if wire_type == 5:
-        return pos + 4
+    if pos > len(data):
+        raise ValueError("Invalid protobuf data")
 
-    raise ValueError("Unsupported protobuf wire type")
+    return pos
 
 
 def _parse_otp(data):
@@ -86,15 +107,15 @@ def _parse_otp(data):
 
         if field in (1, 2, 3) and wire == 2:
             length, pos = _read_varint(data, pos)
-            value = data[pos:pos + length]
+            value = data[pos : pos + length]
             pos += length
 
             if field == 1:
                 otp["secret"] = value
             elif field == 2:
-                otp["name"] = value.decode("utf-8")
+                otp["name"] = value.decode("utf-8", errors="replace")
             else:
-                otp["issuer"] = value.decode("utf-8")
+                otp["issuer"] = value.decode("utf-8", errors="replace")
 
         elif field in (4, 5, 6, 7) and wire == 0:
             value, pos = _read_varint(data, pos)
@@ -141,9 +162,7 @@ def decode_migration_url(value):
 
         if field == 1 and wire == 2:
             length, pos = _read_varint(raw, pos)
-            accounts.append(
-                _parse_otp(raw[pos:pos + length])
-            )
+            accounts.append(_parse_otp(raw[pos : pos + length]))
             pos += length
 
         elif field in (2, 3, 4, 5) and wire == 0:
@@ -172,8 +191,7 @@ def decode_migration_url(value):
 
 def _build_otp(account):
     secret = base64.b32decode(
-        account["secret"].upper() + "="
-        * (-len(account["secret"]) % 8)
+        account["secret"].upper() + "=" * (-len(account["secret"]) % 8)
     )
 
     algorithm = {
@@ -228,7 +246,4 @@ def encode_migration(accounts):
 
     encoded = base64.b64encode(payload).decode("ascii")
 
-    return (
-        "otpauth-migration://offline?data="
-        + urllib.parse.quote(encoded)
-    )
+    return "otpauth-migration://offline?data=" + urllib.parse.quote(encoded)

@@ -84,7 +84,7 @@ python -m pip install --upgrade pip setuptools wheel
 # --- 8. Install required packages ---
 
 echo "==> Installing required packages..."
-python -m pip install PySide6 pyinstaller qrcode[pil] opencv-python zxing-cpp pyotp
+python -m pip install PySide6 pyinstaller qrcode[pil] opencv-python zxing-cpp pyotp cryptography
 
 # --- 9. Check installed packages ---
 

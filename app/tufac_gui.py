@@ -1,38 +1,72 @@
-#!/usr/bin/env python
+# ------------------------------------------------------------------------------
+# Copyright (c) 2026 Michael Gasche
+#
+# TuFac is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# TuFac is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with TuFac. If not, see <https://www.gnu.org/licenses/>.
+# ------------------------------------------------------------------------------
 
+# File:        tufac_gui.py
+# Author:      Michael Gasche
+# Created:     2026-08
+# Product:     TuFac
+# Description: Graphical user interface for managing TOTP accounts.
+
+
+import base64
+import hashlib
+import json
 import sys
 import time
-import base64
-import urllib.parse
-import pyotp
-
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize, QTimer
-from PySide6.QtGui import QAction, QIcon, QKeySequence
+import pyotp
+from config import APP_COPYRIGHT, APP_NAME, APP_VERSION
+from crypto import decrypt_backup, is_envelope
+from migration import decode_migration_url
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QFontMetrics,
+    QIcon,
+    QKeySequence,
+    QPixmap,
+)
+from style import TREE_ACCOUNT, question_icon
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QLabel,
     QLineEdit,
     QMainWindow,
-    QLabel,
     QMenu,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QSplitter,
+    QStackedWidget,
     QStatusBar,
+    QStyledItemDelegate,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
-
-from config import APP_COPYRIGHT, APP_NAME, APP_VERSION
 from storage import TuFacStorage
-
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 RESOURCE_DIR = PROJECT_ROOT / "resources"
@@ -54,155 +88,6 @@ def resource_path(name):
     return base / name
 
 
-def read_varint(data, pos):
-    value = 0
-    shift = 0
-
-    while True:
-        if pos >= len(data):
-            raise ValueError("Unexpected end of protobuf data")
-
-        byte = data[pos]
-        pos += 1
-        value |= (byte & 0x7F) << shift
-
-        if not byte & 0x80:
-            return value, pos
-
-        shift += 7
-
-        if shift > 64:
-            raise ValueError("Invalid protobuf varint")
-
-
-def skip_field(data, pos, wire_type):
-    if wire_type == 0:
-        _, pos = read_varint(data, pos)
-    elif wire_type == 1:
-        pos += 8
-    elif wire_type == 2:
-        length, pos = read_varint(data, pos)
-        pos += length
-    elif wire_type == 5:
-        pos += 4
-    else:
-        raise ValueError("Unsupported protobuf wire type")
-
-    if pos > len(data):
-        raise ValueError("Invalid protobuf data")
-
-    return pos
-
-
-def parse_otp_parameters(data):
-    result = {
-        "secret": b"",
-        "name": "",
-        "issuer": "",
-        "algorithm": 1,
-        "digits": 1,
-        "type": 2,
-        "counter": 0,
-    }
-
-    pos = 0
-
-    while pos < len(data):
-        tag, pos = read_varint(data, pos)
-        field = tag >> 3
-        wire = tag & 7
-
-        if field in (1, 2, 3) and wire == 2:
-            length, pos = read_varint(data, pos)
-            value = data[pos:pos + length]
-            pos += length
-
-            if field == 1:
-                result["secret"] = value
-            elif field == 2:
-                result["name"] = value.decode("utf-8", errors="replace")
-            else:
-                result["issuer"] = value.decode("utf-8", errors="replace")
-
-        elif field in (4, 5, 6, 7) and wire == 0:
-            value, pos = read_varint(data, pos)
-
-            if field == 4:
-                result["algorithm"] = value
-            elif field == 5:
-                result["digits"] = value
-            elif field == 6:
-                result["type"] = value
-            else:
-                result["counter"] = value
-
-        else:
-            pos = skip_field(data, pos, wire)
-
-    return result
-
-
-def parse_migration_payload(data):
-    result = {
-        "otp_parameters": [],
-        "version": 0,
-        "batch_size": 0,
-        "batch_index": 0,
-        "batch_id": 0,
-    }
-
-    pos = 0
-
-    while pos < len(data):
-        tag, pos = read_varint(data, pos)
-        field = tag >> 3
-        wire = tag & 7
-
-        if field == 1 and wire == 2:
-            length, pos = read_varint(data, pos)
-            end = pos + length
-
-            result["otp_parameters"].append(
-                parse_otp_parameters(data[pos:end])
-            )
-
-            pos = end
-
-        elif field in (2, 3, 4, 5) and wire == 0:
-            value, pos = read_varint(data, pos)
-
-            if field == 2:
-                result["version"] = value
-            elif field == 3:
-                result["batch_size"] = value
-            elif field == 4:
-                result["batch_index"] = value
-            else:
-                result["batch_id"] = value
-
-        else:
-            pos = skip_field(data, pos, wire)
-
-    return result
-
-
-def decode_migration_url(value):
-    parsed = urllib.parse.urlparse(value)
-
-    if parsed.scheme != "otpauth-migration":
-        raise ValueError("Not a Google Authenticator migration URL")
-
-    query = urllib.parse.parse_qs(parsed.query)
-    encoded = query.get("data", [None])[0]
-
-    if not encoded:
-        raise ValueError("Migration URL contains no data")
-
-    return parse_migration_payload(
-        base64.b64decode(encoded)
-    )
-
-
 def secret_to_base32(secret):
     return base64.b32encode(secret).decode("ascii").rstrip("=")
 
@@ -214,61 +99,118 @@ def decode_qr_image(filename):
     image = cv2.imread(str(filename))
 
     if image is None:
-        raise ValueError(
-            f"Cannot read image:\n{filename}"
-        )
+        raise ValueError(f"Cannot read image:\n{filename}")
 
     results = zxingcpp.read_barcodes(image)
 
-    values = [
-        result.text
-        for result in results
-        if result.text
-    ]
+    values = [result.text for result in results if result.text]
 
     if not values:
-        raise ValueError(
-            f"No QR code found in:\n{filename}"
-        )
+        raise ValueError(f"No QR code found in:\n{filename}")
 
     return values
 
 
-class AboutDialog(QDialog):
+class AccountTreeDelegate(QStyledItemDelegate):
+    def updateEditorGeometry(self, editor, option, index):
+        rect = option.rect
+        height = max(rect.height() + 8, 28)
+        text = index.data(Qt.ItemDataRole.DisplayRole)
+        metrics = QFontMetrics(editor.font())
+        width = metrics.horizontalAdvance(text or "") + 24
+        width = min(width, editor.parent().width() - rect.x())
+        editor.setGeometry(
+            rect.x(),
+            rect.y() - (height - rect.height()) // 2,
+            width,
+            height,
+        )
 
+
+class AccountTree(QTreeWidget):
+    dropped = Signal()
+
+    def startDrag(self, actions):
+        if any(item.parent() is None for item in self.selectedItems()):
+            return
+
+        super().startDrag(actions)
+
+    def dropEvent(self, event):
+        target = self.itemAt(event.position().toPoint())
+        indicator = self.dropIndicatorPosition()
+
+        for item in self.selectedItems():
+            if item.parent() is None:
+                event.ignore()
+                return
+
+            if (
+                target is None
+                or indicator == QTreeWidget.DropIndicatorPosition.OnViewport
+            ):
+                event.ignore()
+                return
+
+            if (
+                indicator == QTreeWidget.DropIndicatorPosition.OnItem
+                and target.parent() is not None
+            ):
+                event.ignore()
+                return
+
+            if (
+                target.parent() is None
+                and indicator != QTreeWidget.DropIndicatorPosition.OnItem
+            ):
+                event.ignore()
+                return
+
+        super().dropEvent(event)
+
+        if event.isAccepted():
+            self.dropped.emit()
+
+
+class AboutDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
 
         self.setWindowTitle(f"About {APP_NAME}")
-        self.setFixedSize(420, 300)
+        self.setFixedSize(420, 340)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(32, 28, 32, 28)
+        layout.setSpacing(8)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         icon_path = resource_path("app_icon.png")
 
         if icon_path.exists():
-            icon = QPushButton()
-            icon.setIcon(QIcon(str(icon_path)))
-            icon.setIconSize(QSize(96, 96))
-            icon.setFlat(True)
-            icon.setEnabled(False)
+            icon = QLabel()
+            icon.setPixmap(
+                QPixmap(str(icon_path)).scaled(
+                    96,
+                    96,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+            icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(icon)
+
+        layout.addSpacing(6)
 
         name = QLabel(APP_NAME)
         name.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        name.setStyleSheet(
-            "font-size: 24px; font-weight: bold;"
-        )
+        name.setStyleSheet("color: #abd0da; font-size: 28px; font-weight: bold;")
         layout.addWidget(name)
 
         version = QLabel(f"Version {APP_VERSION}")
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(version)
 
-        description = QLabel(
-            "Local Two-Factor Authentication Manager"
-        )
+        description = QLabel("Local Two-Factor Authentication Manager")
         description.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(description)
 
@@ -276,73 +218,164 @@ class AboutDialog(QDialog):
         copyright_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(copyright_label)
 
-        layout.addSpacing(15)
+        layout.addSpacing(14)
 
         button = QPushButton("OK")
+        button.setObjectName("primaryButton")
         button.clicked.connect(self.accept)
         button.setDefault(True)
-        layout.addWidget(button)
+        button.setMinimumWidth(140)
+        layout.addWidget(button, alignment=Qt.AlignmentFlag.AlignHCenter)
 
 
-class AccountDialog(QDialog):
-
-    def __init__(self, account=None, parent=None):
+class BackupPassphraseDialog(QDialog):
+    def __init__(self, parent=None, confirm=False):
         super().__init__(parent)
 
-        self.setWindowTitle(
-            "Edit Account" if account else "Add Account"
-        )
-        self.setMinimumSize(560, 320)
-
-        account = account or {}
+        self.setWindowTitle("Backup Passphrase")
+        self.setMinimumSize(480, 280)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(18)
 
-        title = QLabel(
-            "Edit Account" if account else "Add Account"
-        )
-        title.setStyleSheet(
-            "font-size: 20px; font-weight: bold;"
-        )
+        title = QLabel("Backup Passphrase")
+        title.setStyleSheet("color: #abd0da; font-size: 22px; font-weight: bold;")
         layout.addWidget(title)
 
+        description = QLabel(
+            "Choose a passphrase to protect the backup file.\n"
+            "It will be required again to restore the backup."
+        )
+        description.setWordWrap(True)
+        description.setStyleSheet("font-size: 13px; color: #a8a8a8;")
+        layout.addWidget(description)
+
         form = QFormLayout()
-        form.setHorizontalSpacing(18)
+        form.setHorizontalSpacing(20)
         form.setVerticalSpacing(14)
-        form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow
-        )
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
 
-        self.name_edit = QLineEdit(account.get("name", ""))
-        self.issuer_edit = QLineEdit(account.get("issuer", ""))
-        self.username_edit = QLineEdit(account.get("username", ""))
-        self.secret_edit = QLineEdit(account.get("secret", ""))
+        self.passphrase_edit = QLineEdit()
+        self.passphrase_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.passphrase_edit.setPlaceholderText("e.g. correct horse battery staple")
 
-        for edit in (
-            self.name_edit,
-            self.issuer_edit,
-            self.username_edit,
-            self.secret_edit,
-        ):
-            edit.setMinimumHeight(34)
+        form.addRow("Passphrase:", self.passphrase_edit)
 
-        self.secret_edit.setEchoMode(
-            QLineEdit.EchoMode.Password
-        )
+        self.confirm_edit = None
 
-        form.addRow("Name:", self.name_edit)
-        form.addRow("Issuer:", self.issuer_edit)
-        form.addRow("Username:", self.username_edit)
-        form.addRow("Secret:", self.secret_edit)
+        if confirm:
+            self.confirm_edit = QLineEdit()
+            self.confirm_edit.setEchoMode(QLineEdit.EchoMode.Password)
+            self.confirm_edit.setPlaceholderText("Repeat the passphrase")
+
+            form.addRow("Repeat:", self.confirm_edit)
 
         layout.addLayout(form)
         layout.addStretch()
 
         buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok
-            | QDialogButtonBox.StandardButton.Cancel
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setObjectName(
+            "primaryButton"
+        )
+
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout.addWidget(buttons)
+
+        self.passphrase_edit.setFocus()
+
+    def passphrase(self):
+        return self.passphrase_edit.text()
+
+    def accept(self):
+        passphrase = self.passphrase_edit.text()
+
+        if not passphrase:
+            QMessageBox.warning(self, APP_NAME, "A passphrase is required.")
+            return
+
+        if self.confirm_edit is not None and passphrase != self.confirm_edit.text():
+            QMessageBox.warning(self, APP_NAME, "The passphrases do not match.")
+            return
+
+        super().accept()
+
+
+class AccountDialog(QDialog):
+    def __init__(self, account=None, parent=None):
+        super().__init__(parent)
+
+        self.setWindowTitle("Edit Account" if account else "Add Account")
+        self.setMinimumSize(600, 400)
+
+        account = account or {}
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(18)
+
+        title = QLabel("Edit Account" if account else "Add Account")
+        title.setStyleSheet("color: #abd0da; font-size: 22px; font-weight: bold;")
+        layout.addWidget(title)
+
+        form = QFormLayout()
+        form.setHorizontalSpacing(20)
+        form.setVerticalSpacing(14)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+
+        self.name_edit = QLineEdit(account.get("name", ""))
+        self.name_edit.setPlaceholderText("e.g. Google")
+        self.issuer_edit = QLineEdit(account.get("issuer", ""))
+        self.issuer_edit.setPlaceholderText("e.g. Google")
+        self.username_edit = QLineEdit(account.get("username", ""))
+        self.username_edit.setPlaceholderText("e.g. user@example.com")
+        self.secret_edit = QLineEdit(account.get("secret", ""))
+        self.secret_edit.setPlaceholderText("e.g. JBSWY3DPEHPK3PXP")
+
+        self.algorithm_combo = QComboBox()
+        self.algorithm_combo.addItems(["SHA1", "SHA256", "SHA512", "MD5"])
+
+        algorithm = account.get("algorithm", "SHA1")
+        algorithm_index = self.algorithm_combo.findText(algorithm)
+        self.algorithm_combo.setCurrentIndex(max(algorithm_index, 0))
+
+        self.digits_combo = QComboBox()
+        self.digits_combo.addItems(["6", "8"])
+
+        digits_index = self.digits_combo.findText(str(account.get("digits", 6)))
+        self.digits_combo.setCurrentIndex(max(digits_index, 0))
+
+        self.period_spin = QSpinBox()
+        self.period_spin.setRange(1, 300)
+        self.period_spin.setValue(int(account.get("period", 30)))
+        self.period_spin.setSuffix(" s")
+
+        self.secret_edit.setEchoMode(QLineEdit.EchoMode.Password)
+
+        form.addRow("Name:", self.name_edit)
+        form.addRow("Issuer:", self.issuer_edit)
+        form.addRow("Username:", self.username_edit)
+        form.addRow("Secret:", self.secret_edit)
+        form.addRow("Algorithm:", self.algorithm_combo)
+        form.addRow("Digits:", self.digits_combo)
+        form.addRow("Period:", self.period_spin)
+
+        layout.addLayout(form)
+        layout.addStretch()
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setObjectName(
+            "primaryButton"
         )
 
         buttons.accepted.connect(self.accept)
@@ -359,18 +392,17 @@ class AccountDialog(QDialog):
             "issuer": self.issuer_edit.text().strip(),
             "username": self.username_edit.text().strip(),
             "secret": self.secret_edit.text().strip(),
-            "algorithm": "SHA1",
-            "digits": 6,
-            "period": 30,
+            "algorithm": self.algorithm_combo.currentText(),
+            "digits": int(self.digits_combo.currentText()),
+            "period": self.period_spin.value(),
         }
 
 
 class TuFacWindow(QMainWindow):
-
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle(APP_NAME)
+        self.setWindowTitle(f"{APP_NAME} {APP_VERSION}")
         self.resize(1000, 650)
 
         self.storage = TuFacStorage()
@@ -389,16 +421,17 @@ class TuFacWindow(QMainWindow):
     def create_central_widget(self):
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        self.tree = QTreeWidget()
+        self.tree = AccountTree()
         self.tree.setHeaderHidden(True)
-        self.tree.setMinimumWidth(280)
+        self.tree.setMinimumWidth(300)
+        self.tree.setItemDelegate(AccountTreeDelegate(self.tree))
 
-        self.tree.setContextMenuPolicy(
-            Qt.ContextMenuPolicy.CustomContextMenu
-        )
-        self.tree.customContextMenuRequested.connect(
-            self.show_context_menu
-        )
+        self.tree.setDragDropMode(QTreeWidget.DragDropMode.InternalMove)
+        self.tree.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.tree.setDropIndicatorShown(True)
+
+        self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self.show_context_menu)
 
         self.tree.setEditTriggers(
             QTreeWidget.EditTrigger.DoubleClicked
@@ -406,60 +439,116 @@ class TuFacWindow(QMainWindow):
         )
 
         self.tree.itemChanged.connect(self.item_changed)
-        self.tree.itemSelectionChanged.connect(
-            self.selection_changed
-        )
+        self.tree.itemSelectionChanged.connect(self.selection_changed)
+        self.tree.dropped.connect(self.after_tree_drop)
 
         splitter.addWidget(self.tree)
 
         self.account_panel = QWidget()
+        self.account_panel.setObjectName("detailPanel")
+        self.account_panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+
         account_layout = QVBoxLayout(self.account_panel)
-        account_layout.setContentsMargins(32, 32, 32, 32)
-        account_layout.setSpacing(16)
+        account_layout.setContentsMargins(48, 40, 48, 40)
+        account_layout.setSpacing(14)
 
         self.account_title = QLabel("Select an account")
+        self.account_title.setWordWrap(True)
+        self.account_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.account_title.setStyleSheet(
-            "font-size: 24px; font-weight: bold;"
+            "font-size: 26px; font-weight: bold; color: #ffffff;"
         )
 
-        self.account_info = QLabel(
-            "Select an account from the tree."
-        )
+        self.account_info = QLabel("Select an account from the tree.")
+        self.account_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.account_info.setWordWrap(True)
+        self.account_info.setStyleSheet("font-size: 14px; color: #a8a8a8;")
+
+        self.brand_logo = QLabel()
+        logo_path = resource_path("logo_512.png")
+        if logo_path.exists():
+            self.brand_logo.setPixmap(
+                QPixmap(str(logo_path)).scaled(
+                    180,
+                    180,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        self.brand_logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.brand_title = QLabel(f"{APP_NAME} {APP_VERSION}")
+        self.brand_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.brand_title.setStyleSheet(
+            "font-size: 34px; font-weight: bold; color: #ffffff;"
+        )
+
+        self.brand_copyright = QLabel(APP_COPYRIGHT)
+        self.brand_copyright.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.brand_copyright.setStyleSheet("font-size: 13px; color: #8a8a8a;")
+
+        self.brand_description = QLabel(
+            "TuFac manages your TOTP two-factor codes and generates the "
+            "one-time passwords directly on this device — encrypted and local."
+        )
+        self.brand_description.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.brand_description.setWordWrap(True)
+        self.brand_description.setStyleSheet("font-size: 14px; color: #a8a8a8;")
+
+        self.brand_widget = QWidget()
+        brand_layout = QVBoxLayout(self.brand_widget)
+        brand_layout.setContentsMargins(48, 40, 48, 40)
+        brand_layout.setSpacing(14)
+        brand_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        brand_layout.addStretch()
+        brand_layout.addWidget(self.brand_title)
+        brand_layout.addSpacing(14)
+        brand_layout.addWidget(self.brand_logo)
+        brand_layout.addSpacing(14)
+        brand_layout.addWidget(self.brand_description)
+        brand_layout.addSpacing(28)
+        brand_layout.addWidget(self.brand_copyright)
+        brand_layout.addStretch()
 
         self.otp_code = QLabel("------")
-        self.otp_code.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
+        self.otp_code.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.otp_code.setStyleSheet(
-            "font-size: 42px; font-weight: bold; "
-            "letter-spacing: 8px;"
+            "font-size: 44px; font-weight: bold; letter-spacing: 10px; color: #4da6ff;"
         )
 
         self.otp_remaining = QLabel("")
-        self.otp_remaining.setAlignment(
-            Qt.AlignmentFlag.AlignCenter
-        )
+        self.otp_remaining.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.otp_remaining.setStyleSheet("font-size: 13px; color: #a8a8a8;")
 
         self.copy_code_button = QPushButton("Copy Code")
+        self.copy_code_button.setObjectName("primaryButton")
         self.copy_code_button.setEnabled(False)
-        self.copy_code_button.clicked.connect(
-            self.copy_otp_code
-        )
+        self.copy_code_button.setMinimumWidth(160)
+        self.copy_code_button.clicked.connect(self.copy_otp_code)
 
+        account_page = QWidget()
+        account_layout = QVBoxLayout(account_page)
+        account_layout.setContentsMargins(48, 64, 48, 64)
+        account_layout.setSpacing(14)
         account_layout.addWidget(self.account_title)
         account_layout.addWidget(self.account_info)
-        account_layout.addSpacing(20)
+        account_layout.addSpacing(80)
         account_layout.addWidget(self.otp_code)
         account_layout.addWidget(self.otp_remaining)
+        account_layout.addSpacing(8)
         account_layout.addWidget(
-            self.copy_code_button,
-            alignment=Qt.AlignmentFlag.AlignCenter
+            self.copy_code_button, alignment=Qt.AlignmentFlag.AlignCenter
         )
         account_layout.addStretch()
 
-        splitter.addWidget(self.account_panel)
-        splitter.setSizes([280, 720])
+        self.detail_stack = QStackedWidget()
+        self.detail_stack.addWidget(self.brand_widget)
+        self.detail_stack.addWidget(account_page)
+
+        splitter.addWidget(self.detail_stack)
+        splitter.setSizes([320, 680])
+
+        self.set_detail_visible(False)
 
         self.setCentralWidget(splitter)
 
@@ -467,28 +556,21 @@ class TuFacWindow(QMainWindow):
         self.otp_timer.timeout.connect(self.update_otp)
         self.otp_timer.start(500)
 
-
     def create_menu(self):
         menu_bar = self.menuBar()
 
         file_menu = menu_bar.addMenu("&File")
 
-        import_action = QAction(
-            "Import Accounts...",
-            self
-        )
-        import_action.triggered.connect(
-            self.import_accounts
-        )
+        import_action = QAction("Import from QR Codes...", self)
+        import_action.triggered.connect(self.import_accounts)
         file_menu.addAction(import_action)
 
-        export_action = QAction(
-            "Export Accounts...",
-            self
-        )
-        export_action.triggered.connect(
-            self.export_accounts
-        )
+        import_backup_action = QAction("Import Backup File...", self)
+        import_backup_action.triggered.connect(self.import_backup)
+        file_menu.addAction(import_backup_action)
+
+        export_action = QAction("Export Backup...", self)
+        export_action.triggered.connect(self.export_accounts)
         file_menu.addAction(export_action)
 
         file_menu.addSeparator()
@@ -501,71 +583,46 @@ class TuFacWindow(QMainWindow):
         groups_menu = menu_bar.addMenu("&Groups")
 
         add_group_action = QAction("New Group", self)
-        add_group_action.setShortcut(
-            QKeySequence("Ctrl+Shift+N")
-        )
+        add_group_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
         add_group_action.triggered.connect(self.add_group)
         groups_menu.addAction(add_group_action)
 
-        rename_group_action = QAction(
-            "Rename Group", self
-        )
-        rename_group_action.triggered.connect(
-            self.rename_selected_group
-        )
+        rename_group_action = QAction("Rename Group", self)
+        rename_group_action.triggered.connect(self.rename_selected_group)
         groups_menu.addAction(rename_group_action)
 
-        delete_group_action = QAction(
-            "Delete Group", self
-        )
-        delete_group_action.triggered.connect(
-            self.delete_selected_group
-        )
+        delete_group_action = QAction("Delete Group", self)
+        delete_group_action.triggered.connect(self.delete_selected_group)
         groups_menu.addAction(delete_group_action)
 
         account_menu = menu_bar.addMenu("&Account")
 
-        add_account_action = QAction(
-            "Add Account...",
-            self
-        )
-        add_account_action.triggered.connect(
-            self.add_account
-        )
+        add_account_action = QAction("Add Account...", self)
+        add_account_action.triggered.connect(self.add_account)
         account_menu.addAction(add_account_action)
 
-        edit_account_action = QAction(
-            "Edit Account...",
-            self
-        )
-        edit_account_action.triggered.connect(
-            self.edit_account
-        )
+        edit_account_action = QAction("Edit Account...", self)
+        edit_account_action.triggered.connect(self.edit_account)
         account_menu.addAction(edit_account_action)
 
-        delete_account_action = QAction(
-            "Delete Account",
-            self
-        )
-        delete_account_action.triggered.connect(
-            self.delete_selected_account
-        )
+        delete_account_action = QAction("Delete Account", self)
+        delete_account_action.triggered.connect(self.delete_selected_account)
         account_menu.addAction(delete_account_action)
 
         help_menu = menu_bar.addMenu("&Help")
 
-        about_action = QAction(
-            f"About {APP_NAME}",
-            self
-        )
+        about_action = QAction(f"About {APP_NAME}", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
 
     def create_tree_item(self, text):
         item = QTreeWidgetItem([text])
-        item.setFlags(
-            item.flags() | Qt.ItemFlag.ItemIsEditable
-        )
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
+        return item
+
+    def create_account_tree_item(self, text):
+        item = self.create_tree_item(text)
+        item.setForeground(0, QColor(TREE_ACCOUNT))
         return item
 
     def load_tree(self):
@@ -573,22 +630,22 @@ class TuFacWindow(QMainWindow):
         self.tree.clear()
 
         for group in self.data.get("groups", []):
-            group_item = self.create_tree_item(
-                group.get("name", "Unnamed Group")
-            )
+            group_item = self.create_tree_item(group.get("name", "Unnamed Group"))
 
             self.tree.addTopLevelItem(group_item)
 
             for account in group.get("accounts", []):
-                account_item = self.create_tree_item(
+                account_item = self.create_account_tree_item(
                     account.get("name", "Unnamed Account")
                 )
+                account_item.setData(0, Qt.ItemDataRole.UserRole, account)
                 group_item.addChild(account_item)
 
         self.tree.blockSignals(False)
 
     def save_data(self):
         self.storage.save(self.data)
+        self.update_status_counts()
 
     def add_group(self):
         group = {
@@ -609,11 +666,7 @@ class TuFacWindow(QMainWindow):
         item = self.tree.currentItem()
 
         if item is None:
-            QMessageBox.information(
-                self,
-                APP_NAME,
-                "Please select a group first."
-            )
+            QMessageBox.information(self, APP_NAME, "Please select a group first.")
             return
 
         if item.parent() is not None:
@@ -632,22 +685,15 @@ class TuFacWindow(QMainWindow):
         account = dialog.get_account()
 
         if not account["name"]:
-            QMessageBox.warning(
-                self,
-                APP_NAME,
-                "An account name is required."
-            )
+            QMessageBox.warning(self, APP_NAME, "An account name is required.")
             return
 
-        self.data["groups"][group_index][
-            "accounts"
-        ].append(account)
+        self.data["groups"][group_index]["accounts"].append(account)
 
         self.save_data()
 
-        account_item = self.create_tree_item(
-            account["name"]
-        )
+        account_item = self.create_account_tree_item(account["name"])
+        account_item.setData(0, Qt.ItemDataRole.UserRole, account)
 
         item.addChild(account_item)
         item.setExpanded(True)
@@ -688,9 +734,7 @@ class TuFacWindow(QMainWindow):
             if group_index < 0:
                 return
 
-            accounts = self.data["groups"][group_index].get(
-                "accounts", []
-            )
+            accounts = self.data["groups"][group_index].get("accounts", [])
 
             if 0 <= account_index < len(accounts):
                 accounts[account_index]["name"] = name
@@ -708,21 +752,24 @@ class TuFacWindow(QMainWindow):
         else:
             self.delete_selected_account()
 
+    def confirm(self, text):
+        box = QMessageBox(self)
+        box.setWindowTitle(APP_NAME)
+        box.setIconPixmap(question_icon())
+        box.setText(text)
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        box.setDefaultButton(QMessageBox.StandardButton.No)
+        return box.exec() == QMessageBox.StandardButton.Yes
+
     def delete_selected_group(self):
         item = self.tree.currentItem()
 
         if item is None or item.parent() is not None:
             return
 
-        result = QMessageBox.question(
-            self,
-            APP_NAME,
-            f"Delete group '{item.text(0)}'?",
-            QMessageBox.StandardButton.Yes
-            | QMessageBox.StandardButton.No,
-        )
-
-        if result != QMessageBox.StandardButton.Yes:
+        if not self.confirm(f"Delete group '{item.text(0)}'?"):
             return
 
         index = self.tree.indexOfTopLevelItem(item)
@@ -740,15 +787,7 @@ class TuFacWindow(QMainWindow):
         if item is None or item.parent() is None:
             return
 
-        result = QMessageBox.question(
-            self,
-            APP_NAME,
-            f"Delete account '{item.text(0)}'?",
-            QMessageBox.StandardButton.Yes
-            | QMessageBox.StandardButton.No,
-        )
-
-        if result != QMessageBox.StandardButton.Yes:
+        if not self.confirm(f"Delete account '{item.text(0)}'?"):
             return
 
         group_item = item.parent()
@@ -758,9 +797,7 @@ class TuFacWindow(QMainWindow):
         if group_index < 0:
             return
 
-        accounts = self.data["groups"][group_index].get(
-            "accounts", []
-        )
+        accounts = self.data["groups"][group_index].get("accounts", [])
 
         if not 0 <= account_index < len(accounts):
             return
@@ -788,9 +825,7 @@ class TuFacWindow(QMainWindow):
             action.triggered.connect(self.rename_selected)
 
             action = menu.addAction("Delete")
-            action.triggered.connect(
-                self.delete_selected_group
-            )
+            action.triggered.connect(self.delete_selected_group)
 
         else:
             action = menu.addAction("Edit Account...")
@@ -802,27 +837,28 @@ class TuFacWindow(QMainWindow):
             menu.addSeparator()
 
             action = menu.addAction("Delete")
-            action.triggered.connect(
-                self.delete_selected_account
-            )
+            action.triggered.connect(self.delete_selected_account)
 
-        menu.exec(
-            self.tree.viewport().mapToGlobal(position)
-        )
+        menu.exec(self.tree.viewport().mapToGlobal(position))
+
+    def set_detail_visible(self, visible):
+        self.account_title.setVisible(visible)
+        self.account_info.setVisible(visible)
+        self.otp_code.setVisible(visible)
+        self.otp_remaining.setVisible(visible)
+        self.copy_code_button.setVisible(visible)
+        self.detail_stack.setCurrentIndex(1 if visible else 0)
 
     def selection_changed(self):
         item = self.tree.currentItem()
 
         if item is None:
-            self.account_title.setText("Select an account")
-            self.account_info.setText(
-                "Select an account from the tree."
-            )
+            self.set_detail_visible(False)
             return
 
         if item.parent() is None:
             self.account_title.setText(item.text(0))
-            self.account_info.setText("Group")
+            self.set_detail_visible(False)
             return
 
         group_item = item.parent()
@@ -832,9 +868,7 @@ class TuFacWindow(QMainWindow):
         account = None
 
         if group_index >= 0:
-            accounts = self.data["groups"][group_index].get(
-                "accounts", []
-            )
+            accounts = self.data["groups"][group_index].get("accounts", [])
 
             if 0 <= account_index < len(accounts):
                 account = accounts[account_index]
@@ -842,14 +876,10 @@ class TuFacWindow(QMainWindow):
         if account is None:
             self.account_title.setText(item.text(0))
             self.account_info.setText("TOTP account")
+            self.set_detail_visible(True)
             return
 
-        # The Google Authenticator title is the account name.
-        title = account.get("name") or account.get("issuer") or "Unnamed Account"
-
-        self.account_title.setText(
-            account.get("name", "Unnamed Account")
-        )
+        self.account_title.setText(account.get("name", "Unnamed Account"))
 
         information = "TOTP account"
 
@@ -857,6 +887,8 @@ class TuFacWindow(QMainWindow):
             information += f"\nUsername: {account['username']}"
 
         self.account_info.setText(information)
+
+        self.set_detail_visible(True)
 
         self.update_otp()
 
@@ -873,17 +905,12 @@ class TuFacWindow(QMainWindow):
         if group_index < 0:
             return
 
-        accounts = self.data["groups"][group_index].get(
-            "accounts", []
-        )
+        accounts = self.data["groups"][group_index].get("accounts", [])
 
         if not 0 <= account_index < len(accounts):
             return
 
-        dialog = AccountDialog(
-            account=accounts[account_index],
-            parent=self
-        )
+        dialog = AccountDialog(account=accounts[account_index], parent=self)
 
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -891,14 +918,11 @@ class TuFacWindow(QMainWindow):
         account = dialog.get_account()
 
         if not account["name"]:
-            QMessageBox.warning(
-                self,
-                APP_NAME,
-                "An account name is required."
-            )
+            QMessageBox.warning(self, APP_NAME, "An account name is required.")
             return
 
         accounts[account_index] = account
+        item.setData(0, Qt.ItemDataRole.UserRole, account)
         item.setText(0, account["name"])
 
         self.save_data()
@@ -909,7 +933,7 @@ class TuFacWindow(QMainWindow):
             self,
             "Import Google Authenticator Accounts",
             "",
-            "Images (*.png *.jpg *.jpeg *.webp *.bmp)"
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp)",
         )
 
         if not files:
@@ -921,53 +945,41 @@ class TuFacWindow(QMainWindow):
         try:
             for filename in files:
                 for value in decode_qr_image(filename):
-                    if not value.startswith(
-                        "otpauth-migration://"
-                    ):
+                    if not value.startswith("otpauth-migration://"):
                         continue
 
                     payload = decode_migration_url(value)
 
                     batch_id = payload["batch_id"]
-                    batches.setdefault(batch_id, {})[
-                        payload["batch_index"]
-                    ] = payload
+                    batches.setdefault(batch_id, {})[payload["batch_index"]] = payload
 
             for batch in batches.values():
                 for index in sorted(batch):
-                    accounts.extend(
-                        batch[index]["otp_parameters"]
-                    )
+                    accounts.extend(batch[index]["otp_parameters"])
 
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             import traceback
 
             print("\nTuFac import failed:", file=sys.stderr)
             traceback.print_exc()
 
             message = QMessageBox(self)
-            message.setIcon(
-                QMessageBox.Icon.Critical
-            )
+            message.setIcon(QMessageBox.Icon.Critical)
             message.setWindowTitle(str(APP_NAME))
             message.setText("Import failed")
             message.setInformativeText(str(exc))
-            message.setStandardButtons(
-                QMessageBox.StandardButton.Ok
-            )
+            message.setStandardButtons(QMessageBox.StandardButton.Ok)
             message.exec()
 
             return
 
         if not accounts:
             QMessageBox.warning(
-                self,
-                APP_NAME,
-                "No Google Authenticator accounts were found."
+                self, APP_NAME, "No Google Authenticator accounts were found."
             )
             return
 
-        group_name = "Imported Accounts"
+        group_name = self.unique_group_name("Imported Accounts")
 
         group = {
             "name": group_name,
@@ -996,86 +1008,198 @@ class TuFacWindow(QMainWindow):
             username = name
 
             if issuer and name.startswith(issuer + ":"):
-                username = name[len(issuer) + 1:]
+                username = name[len(issuer) + 1 :]
 
-            display_name = f"{issuer}: {username}" if issuer and username else (
-                issuer or username or "Imported Account"
+            display_name = (
+                f"{issuer}: {username}"
+                if issuer and username
+                else (issuer or username or "Imported Account")
             )
 
-            group["accounts"].append({
-                "name": display_name,
-                "issuer": issuer,
-                "username": username,
-                "secret": secret_to_base32(otp["secret"]),
-                "algorithm": algorithm,
-                "digits": digits,
-                "period": 30,
-            })
+            group["accounts"].append(
+                {
+                    "name": display_name,
+                    "issuer": issuer,
+                    "username": username,
+                    "secret": secret_to_base32(otp["secret"]),
+                    "algorithm": algorithm,
+                    "digits": digits,
+                    "period": 30,
+                }
+            )
 
         if not group["accounts"]:
-            QMessageBox.warning(
-                self,
-                APP_NAME,
-                "No TOTP accounts were found."
-            )
+            QMessageBox.warning(self, APP_NAME, "No TOTP accounts were found.")
             return
 
         self.data.setdefault("groups", []).append(group)
         self.save_data()
         self.load_tree()
 
-        group_item = self.tree.topLevelItem(
-            self.tree.topLevelItemCount() - 1
-        )
+        group_item = self.tree.topLevelItem(self.tree.topLevelItemCount() - 1)
         group_item.setExpanded(True)
         self.tree.setCurrentItem(group_item)
 
         QMessageBox.information(
-            self,
-            APP_NAME,
-            f"Imported {len(group['accounts'])} account(s)."
+            self, APP_NAME, f"Imported {len(group['accounts'])} account(s)."
         )
 
     def export_accounts(self):
         filename, _ = QFileDialog.getSaveFileName(
             self,
-            "Export Accounts",
-            "tufac-export.json",
-            "JSON Files (*.json)"
+            "Export Backup",
+            "tufac-backup.json",
+            "JSON Files (*.json)",
+        )
+
+        if not filename:
+            return
+
+        dialog = BackupPassphraseDialog(self, confirm=True)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        try:
+            self.storage.export_backup(self.data, Path(filename), dialog.passphrase())
+        except (OSError, ValueError) as exc:
+            QMessageBox.critical(self, APP_NAME, f"Export failed:\n\n{exc}")
+            return
+
+        QMessageBox.information(
+            self,
+            APP_NAME,
+            "Backup exported successfully.\nThe file is protected by the passphrase.",
+        )
+
+    def import_backup(self):
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Backup File",
+            "",
+            "JSON Files (*.json)",
         )
 
         if not filename:
             return
 
         try:
-            self.storage.export_json(
-                self.data,
-                Path(filename)
-            )
-        except AttributeError:
-            import json
-
-            Path(filename).write_text(
-                json.dumps(
-                    self.data,
-                    indent=2,
-                    ensure_ascii=False
-                ),
-                encoding="utf-8"
-            )
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                APP_NAME,
-                f"Export failed:\n\n{exc}"
-            )
+            with Path(filename).open("r", encoding="utf-8") as file:
+                imported = json.load(file)
+        except (OSError, json.JSONDecodeError) as exc:
+            QMessageBox.critical(self, APP_NAME, f"Import failed:\n\n{exc}")
             return
+
+        if is_envelope(imported):
+            dialog = BackupPassphraseDialog(self, confirm=False)
+
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            try:
+                imported = decrypt_backup(imported, dialog.passphrase())
+            except Exception:  # noqa: BLE001
+                QMessageBox.critical(
+                    self,
+                    APP_NAME,
+                    "Import failed:\n\nWrong passphrase or corrupted file.",
+                )
+                return
+
+        if not isinstance(imported, dict) or not isinstance(
+            imported.get("groups"), list
+        ):
+            QMessageBox.warning(self, APP_NAME, "The file is not a valid TuFac backup.")
+            return
+
+        added_groups = 0
+        added_accounts = 0
+
+        for group in imported["groups"]:
+            if not isinstance(group, dict):
+                continue
+
+            group_name = group.get("name", "Unnamed Group")
+            accounts = [
+                account
+                for account in group.get("accounts", [])
+                if isinstance(account, dict)
+            ]
+
+            existing = next(
+                (
+                    existing_group
+                    for existing_group in self.data.setdefault("groups", [])
+                    if existing_group.get("name") == group_name
+                ),
+                None,
+            )
+
+            if existing is None:
+                self.data["groups"].append(
+                    {"name": group_name, "accounts": list(accounts)}
+                )
+                added_groups += 1
+                added_accounts += len(accounts)
+                continue
+
+            existing_accounts = existing.setdefault("accounts", [])
+            before = len(existing_accounts)
+
+            for account in accounts:
+                if account not in existing_accounts:
+                    existing_accounts.append(account)
+
+            added_accounts += len(existing_accounts) - before
+
+        self.save_data()
+        self.load_tree()
 
         QMessageBox.information(
             self,
             APP_NAME,
-            "Accounts exported successfully."
+            f"Imported {added_groups} group(s) with {added_accounts} new account(s).",
         )
+
+    def unique_group_name(self, base_name):
+        existing = {group.get("name") for group in self.data.get("groups", [])}
+
+        name = base_name
+        counter = 2
+
+        while name in existing:
+            name = f"{base_name} {counter}"
+            counter += 1
+
+        return name
+
+    def rebuild_data_from_tree(self):
+        groups = []
+
+        for index in range(self.tree.topLevelItemCount()):
+            group_item = self.tree.topLevelItem(index)
+
+            accounts = []
+
+            for child_index in range(group_item.childCount()):
+                account_item = group_item.child(child_index)
+                account = account_item.data(0, Qt.ItemDataRole.UserRole)
+
+                if account is not None:
+                    accounts.append(account)
+
+            groups.append(
+                {
+                    "name": group_item.text(0).strip() or "Unnamed Group",
+                    "accounts": accounts,
+                }
+            )
+
+        self.data["groups"] = groups
+
+    def after_tree_drop(self):
+        self.rebuild_data_from_tree()
+        self.save_data()
 
     def show_about(self):
         dialog = AboutDialog(self)
@@ -1083,8 +1207,33 @@ class TuFacWindow(QMainWindow):
 
     def create_status_bar(self):
         self.setStatusBar(QStatusBar(self))
-        self.statusBar().showMessage(
-            f"{APP_NAME} {APP_VERSION}"
+        self.statusBar().setContentsMargins(12, 0, 12, 5)
+
+        self.status_counts = QLabel()
+        self.status_counts.setStyleSheet("color: #a8a8a8;")
+        self.status_counts.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.statusBar().addWidget(self.status_counts)
+
+        self.status_encrypted = QLabel("Encrypted")
+        self.status_encrypted.setStyleSheet("color: #7fd18a;")
+        self.status_encrypted.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.statusBar().addPermanentWidget(self.status_encrypted)
+
+        self.update_status_counts()
+
+    def update_status_counts(self):
+        groups = self.data.get("groups", [])
+        accounts = sum(len(group.get("accounts", [])) for group in groups)
+
+        group_word = "group" if len(groups) == 1 else "groups"
+        account_word = "account" if accounts == 1 else "accounts"
+
+        self.status_counts.setText(
+            f"{len(groups)} {group_word}  \u00b7  {accounts} {account_word}"
         )
 
     def update_otp(self):
@@ -1103,9 +1252,7 @@ class TuFacWindow(QMainWindow):
         if group_index < 0:
             return
 
-        accounts = self.data["groups"][group_index].get(
-            "accounts", []
-        )
+        accounts = self.data["groups"][group_index].get("accounts", [])
 
         if not 0 <= account_index < len(accounts):
             return
@@ -1117,57 +1264,26 @@ class TuFacWindow(QMainWindow):
                 account["secret"],
                 digits=int(account.get("digits", 6)),
                 interval=int(account.get("period", 30)),
-                digest=getattr(
-                    __import__("hashlib"),
-                    account.get("algorithm", "SHA1").lower()
-                ),
+                digest=getattr(hashlib, account.get("algorithm", "SHA1").lower()),
             )
 
             code = totp.now()
 
             current_time = time.time()
-            remaining = int(
-                totp.interval - (current_time % totp.interval)
-            )
+            remaining = int(totp.interval - (current_time % totp.interval))
 
             self.otp_code.setText(code)
-            self.otp_remaining.setText(
-                f"Valid for {remaining} seconds"
-            )
+            self.otp_remaining.setText(f"Valid for {remaining} seconds")
             self.copy_code_button.setEnabled(True)
 
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self.otp_code.setText("ERROR")
             self.otp_remaining.setText(str(exc))
             self.copy_code_button.setEnabled(False)
-
 
     def copy_otp_code(self):
         code = self.otp_code.text()
 
         if code and code != "------" and code != "ERROR":
             QApplication.clipboard().setText(code)
-            self.statusBar().showMessage(
-                "Code copied to clipboard",
-                2000
-            )
-
-def main():
-    app = QApplication(sys.argv)
-
-    app.setApplicationName(APP_NAME)
-    app.setApplicationVersion(APP_VERSION)
-
-    icon_path = resource_path(get_app_icon_name())
-
-    if icon_path.exists():
-        app.setWindowIcon(QIcon(str(icon_path)))
-
-    window = TuFacWindow()
-    window.show()
-
-    sys.exit(app.exec())
-
-
-if __name__ == "__main__":
-    main()
+            self.statusBar().showMessage("Code copied to clipboard", 2000)
