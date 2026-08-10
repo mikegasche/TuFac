@@ -2,8 +2,8 @@
   <img src="app/resources/tufac_logo.png" width="128">
   <h1>TuFac</h1>
 
-  A local, encrypted TOTP two-factor authentication manager with a native desktop UI.
-  TuFac stores your accounts in an encrypted local file, generates the one-time passwords
+  Transfer your Google Authenticator codes from your phone to your Mac or PC.
+  TuFac manages your two-factor accounts locally, generates the one-time codes
   directly on your device and never sends anything to the network.
 
   <img src="https://img.shields.io/badge/version-1.0.0-FFD54F">

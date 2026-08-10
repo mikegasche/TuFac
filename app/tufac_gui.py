@@ -61,6 +61,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
     QStackedWidget,
@@ -779,11 +780,15 @@ class TuFacWindow(QMainWindow):
         self.brand_copyright.setStyleSheet("font-size: 13px; color: #8a8a8a;")
 
         self.brand_description = QLabel(
-            "TuFac manages your TOTP two-factor codes and generates the "
-            "one-time passwords directly on this device — encrypted and local."
+            "Transfer your Google Authenticator codes from your phone to your Mac or PC. "
+            "TuFac manages your two-factor accounts locally, generates the one-time codes "
+            "directly on your device and never sends anything to the network."
         )
         self.brand_description.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.brand_description.setWordWrap(True)
+        self.brand_description.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
         self.brand_description.setStyleSheet("font-size: 14px; color: #a8a8a8;")
 
         self.brand_widget = QWidget()
