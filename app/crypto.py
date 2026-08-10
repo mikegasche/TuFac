@@ -108,9 +108,7 @@ def _parse_envelope(envelope):
         raise ValueError("Unsupported backup format version.")
 
     missing = [
-        field
-        for field in ("nonce", "ciphertext")
-        if not isinstance(envelope.get(field), str)
+        field for field in ("nonce", "ciphertext") if not isinstance(envelope.get(field), str)
     ]
 
     if missing:

@@ -1,0 +1,119 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install PySide6 pyinstaller opencv-python zxing-cpp pyotp cryptography
+
+      - name: Build with PyInstaller
+        run: |
+          python -m PyInstaller ^
+            --name "TuFac" ^
+            --windowed ^
+            --onefile ^
+            --icon "app\resources\app_icon.ico" ^
+            --add-data "app\resources;resources" ^
+            --hidden-import "PySide6" ^
+            --hidden-import "PySide6.QtCore" ^
+            --hidden-import "PySide6.QtGui" ^
+            --hidden-import "PySide6.QtWidgets" ^
+            --hidden-import "cv2" ^
+            --hidden-import "zxingcpp" ^
+            --hidden-import "pyotp" ^
+            app\tufac.py
+
+      - name: Rename executable with version
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mv dist/TuFac.exe "dist/TuFac-${VERSION}-windows-x64.exe"
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TuFac-windows
+          path: dist/TuFac-*-windows-x64.exe
+
+  build-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13
+            arch: x86_64
+          - os: macos-14
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install PySide6 pyinstaller opencv-python zxing-cpp pyotp cryptography
+
+      - name: Build with PyInstaller
+        run: |
+          python -m PyInstaller \
+            --name "TuFac" \
+            --windowed \
+            --icon "app/resources/app_icon.icns" \
+            --add-data "app/resources:resources" \
+            app/tufac.py
+
+      - name: Zip .app bundle
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd dist
+          zip -r "TuFac-${VERSION}-macos-${{ matrix.arch }}.zip" TuFac.app
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TuFac-macos-${{ matrix.arch }}
+          path: dist/TuFac-*-macos-${{ matrix.arch }}.zip
+
+  release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "${GITHUB_REF_NAME}" \
+            artifacts/*/* \
+            --title "TuFac ${VERSION}" \
+            --generate-notes

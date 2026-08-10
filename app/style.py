@@ -43,6 +43,7 @@ def question_icon(size=48):
     painter.end()
     return pixmap
 
+
 ACCENT = "#3399ff"
 ACCENT_HOVER = "#55aaff"
 WINDOW = "#1e1e1e"

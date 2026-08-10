@@ -29,23 +29,24 @@ import sys
 import time
 from pathlib import Path
 
+import cv2
 import pyotp
+import zxingcpp
 from config import APP_COPYRIGHT, APP_NAME, APP_VERSION, GITHUB_LINK
 from crypto import decrypt_backup, is_envelope
 from migration import decode_migration_url
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
-    QColor,
-    QPainter,
     QBrush,
-    QPen,
+    QColor,
     QFontMetrics,
     QIcon,
     QKeySequence,
+    QPainter,
+    QPen,
     QPixmap,
 )
-from style import TREE_ACCOUNT, question_icon
 from PySide6.QtWidgets import (
     QApplication,
     QColorDialog,
@@ -54,7 +55,6 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -72,6 +72,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from storage import TuFacStorage
+from style import TREE_ACCOUNT, question_icon
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 RESOURCE_DIR = PROJECT_ROOT / "resources"
@@ -86,10 +87,7 @@ def get_app_icon_name():
 
 
 def resource_path(name):
-    if getattr(sys, "frozen", False):
-        base = Path(sys._MEIPASS) / "resources"
-    else:
-        base = RESOURCE_DIR
+    base = Path(sys._MEIPASS) / "resources" if getattr(sys, "frozen", False) else RESOURCE_DIR
     return base / name
 
 
@@ -98,9 +96,6 @@ def secret_to_base32(secret):
 
 
 def decode_qr_image(filename):
-    import cv2
-    import zxingcpp
-
     image = cv2.imread(str(filename))
 
     if image is None:
@@ -123,17 +118,17 @@ class ColorCircle(QLabel):
         self.setFixedSize(32, 32)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setStyleSheet("background: transparent;")
-    
+
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
+
         if self.color and self.color.isValid():
             painter.setBrush(QBrush(self.color))
         else:
             painter.setBrush(QBrush(QColor(200, 200, 200)))
-        
+
         painter.setPen(QPen(Qt.GlobalColor.transparent, 0))
         painter.drawEllipse(4, 4, 24, 24)
 
@@ -162,25 +157,24 @@ class AccountTree(QTreeWidget):
         self.setHeaderHidden(True)
         self.setMinimumWidth(300)
         self.setItemDelegate(AccountTreeDelegate(self))
-        
+
         # Enable multi-selection with Ctrl/Shift
         self.setSelectionMode(QTreeWidget.SelectionMode.ExtendedSelection)
-        
+
         # Enable drag & drop for moving items
         self.setDragDropMode(QTreeWidget.DragDropMode.InternalMove)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.setDropIndicatorShown(True)
-        
+
         # Context menu
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(parent.show_context_menu)
-        
+
         # Edit triggers
         self.setEditTriggers(
-            QTreeWidget.EditTrigger.DoubleClicked
-            | QTreeWidget.EditTrigger.EditKeyPressed
+            QTreeWidget.EditTrigger.DoubleClicked | QTreeWidget.EditTrigger.EditKeyPressed
         )
-        
+
         # Connect signals
         self.itemChanged.connect(parent.item_changed)
         self.itemSelectionChanged.connect(parent.selection_changed)
@@ -194,7 +188,7 @@ class AccountTree(QTreeWidget):
         target = self.itemAt(event.position().toPoint())
         indicator = self.dropIndicatorPosition()
         selected_items = self.selectedItems()
-        
+
         if target is None:
             # Dropping on empty area - move groups to end
             moved_count = 0
@@ -205,52 +199,52 @@ class AccountTree(QTreeWidget):
                         self.takeTopLevelItem(current_index)
                         self.addTopLevelItem(item)
                         moved_count += 1
-            
+
             if moved_count > 0:
                 self.dropped.emit()
                 event.accept()
                 return
-            
+
             event.ignore()
             return
-        
+
         # Dropping accounts onto a group
         if target.parent() is None and indicator == QTreeWidget.DropIndicatorPosition.OnItem:
             group_item = target
             moved_count = 0
-            
+
             for item in selected_items:
                 if item.parent() is not None:
                     old_parent = item.parent()
                     old_parent.removeChild(item)
                     group_item.addChild(item)
                     moved_count += 1
-            
+
             if moved_count > 0:
                 group_item.setExpanded(True)
                 self.dropped.emit()
                 event.accept()
                 return
-        
+
         # Reordering groups
         if target.parent() is None:
             group_items = [item for item in selected_items if item.parent() is None]
-            
+
             if group_items:
                 for item in group_items:
                     current_index = self.indexOfTopLevelItem(item)
                     target_index = self.indexOfTopLevelItem(target)
-                    
+
                     if current_index >= 0 and target_index >= 0 and current_index != target_index:
                         self.takeTopLevelItem(current_index)
                         if current_index < target_index:
                             target_index -= 1
                         self.insertTopLevelItem(target_index, item)
-                
+
                 self.dropped.emit()
                 event.accept()
                 return
-        
+
         super().dropEvent(event)
         if event.isAccepted():
             self.dropped.emit()
@@ -305,10 +299,12 @@ class AboutDialog(QDialog):
         github_url = GITHUB_LINK
         if not github_url.startswith(("http://", "https://")):
             github_url = "https://" + github_url
-        
+
         github_label = QLabel()
-        
-        github_label.setText(f'<a href="{github_url}" style="text-decoration:none;">{GITHUB_LINK}</a>')
+
+        github_label.setText(
+            f'<a href="{github_url}" style="text-decoration:none;">{GITHUB_LINK}</a>'
+        )
         github_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         github_label.setOpenExternalLinks(True)
         layout.addWidget(github_label)
@@ -339,8 +335,7 @@ class GroupDialog(QDialog):
         layout.addWidget(title)
 
         description = QLabel(
-            "Enter a name for the new group.\n"
-            "Selected accounts will be moved to this group."
+            "Enter a name for the new group.\nSelected accounts will be moved to this group."
         )
         description.setWordWrap(True)
         description.setStyleSheet("font-size: 13px; color: #a8a8a8;")
@@ -365,9 +360,7 @@ class GroupDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
 
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setObjectName(
-            "primaryButton"
-        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setObjectName("primaryButton")
 
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -378,7 +371,8 @@ class GroupDialog(QDialog):
 
     def group_name(self):
         return self.name_edit.text().strip()
-    
+
+
 class BackupPassphraseDialog(QDialog):
     def __init__(self, parent=None, confirm=False):
         super().__init__(parent)
@@ -430,9 +424,7 @@ class BackupPassphraseDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
 
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setObjectName(
-            "primaryButton"
-        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setObjectName("primaryButton")
 
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -525,9 +517,7 @@ class AccountDialog(QDialog):
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
 
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setObjectName(
-            "primaryButton"
-        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setObjectName("primaryButton")
 
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -571,19 +561,19 @@ class TuFacWindow(QMainWindow):
 
     def set_group_color(self):
         item = self.tree.currentItem()
-        
+
         if item is None or item.parent() is not None:
             return
-        
+
         current_color = item.data(0, Qt.ItemDataRole.UserRole)
         if current_color:
             color = QColorDialog.getColor(QColor(current_color), self, "Choose Group Color")
         else:
             color = QColorDialog.getColor(QColor(), self, "Choose Group Color")
-        
+
         if not color.isValid():
             return
-        
+
         # Store color in group data
         group_index = self.tree.indexOfTopLevelItem(item)
         if group_index >= 0:
@@ -594,19 +584,18 @@ class TuFacWindow(QMainWindow):
     def remove_group_color(self):
         if not self.tree.selectedItems():
             return
-        
+
         item = self.tree.currentItem()
-        
+
         if item is None or item.parent() is not None:
             return
-        
+
         group_index = self.tree.indexOfTopLevelItem(item)
-        if group_index >= 0:
-            if "color" in self.data["groups"][group_index]:
-                del self.data["groups"][group_index]["color"]
-                self.save_data()
-                item.setIcon(0, QIcon())
-                item.setData(0, Qt.ItemDataRole.UserRole, None)
+        if group_index >= 0 and "color" in self.data["groups"][group_index]:
+            del self.data["groups"][group_index]["color"]
+            self.save_data()
+            item.setIcon(0, QIcon())
+            item.setData(0, Qt.ItemDataRole.UserRole, None)
 
     def update_group_display(self, item, color):
         if color is None:
@@ -630,42 +619,39 @@ class TuFacWindow(QMainWindow):
     def create_group_from_selected(self):
         selected_items = self.tree.selectedItems()
         selected_accounts = [it for it in selected_items if it.parent() is not None]
-        
+
         if not selected_accounts:
             return
-        
+
         default_name = f"Group {len(self.data['groups']) + 1}"
-        
+
         dialog = GroupDialog(self, default_name)
-        
+
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        
+
         group_name = dialog.group_name()
-        
+
         if not group_name:
             QMessageBox.warning(self, APP_NAME, "A group name is required.")
             return
-        
+
         # Create new group in data structure
-        new_group = {
-            "name": group_name,
-            "accounts": []
-        }
+        new_group = {"name": group_name, "accounts": []}
         self.data["groups"].append(new_group)
         group_index = len(self.data["groups"]) - 1
-        
+
         # Create new group in tree
         group_item = self.create_tree_item(group_name)
         self.tree.addTopLevelItem(group_item)
-        
+
         # Move selected accounts to new group
         for account_item in selected_accounts:
             account = account_item.data(0, Qt.ItemDataRole.UserRole)
             if account:
                 # Add to new group in data
                 self.data["groups"][group_index]["accounts"].append(account)
-                
+
                 # Remove from old group in data
                 old_group_item = account_item.parent()
                 if old_group_item:
@@ -674,63 +660,63 @@ class TuFacWindow(QMainWindow):
                         old_accounts = self.data["groups"][old_group_index]["accounts"]
                         if account in old_accounts:
                             old_accounts.remove(account)
-                
+
                 # Move in tree
                 old_parent = account_item.parent()
                 if old_parent:
                     old_parent.removeChild(account_item)
-                
+
                 group_item.addChild(account_item)
-        
+
         # Save and update UI
         self.save_data()
         group_item.setExpanded(True)
-        
+
         # Clear selection to prevent context menu from reopening
         self.tree.clearSelection()
         self.tree.setCurrentItem(None)
-    
+
         QMessageBox.information(
             self,
             APP_NAME,
-            f"Created group '{group_name}' with {len(selected_accounts)} account(s)."
+            f"Created group '{group_name}' with {len(selected_accounts)} account(s).",
         )
 
     def delete_multiple_accounts(self):
         selected_items = self.tree.selectedItems()
         selected_accounts = [it for it in selected_items if it.parent() is not None]
-        
+
         if not selected_accounts:
             return
-        
+
         # Confirm deletion
         if not self.confirm(f"Delete {len(selected_accounts)} account(s) from their groups?"):
             return
-        
+
         # Delete each account
         for account_item in selected_accounts:
             group_item = account_item.parent()
             if not group_item:
                 continue
-            
+
             group_index = self.tree.indexOfTopLevelItem(group_item)
             if group_index < 0:
                 continue
-            
+
             account_index = group_item.indexOfChild(account_item)
             accounts = self.data["groups"][group_index].get("accounts", [])
-            
+
             if 0 <= account_index < len(accounts):
                 del accounts[account_index]
                 group_item.removeChild(account_item)
-        
+
         self.save_data()
         self.update_status_counts()
-        
+
         # Clear selection to prevent context menu from reopening
         self.tree.clearSelection()
         self.tree.setCurrentItem(None)
-    
+
     def create_central_widget(self):
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
@@ -744,8 +730,7 @@ class TuFacWindow(QMainWindow):
         self.tree.setDropIndicatorShown(True)
 
         self.tree.setEditTriggers(
-            QTreeWidget.EditTrigger.DoubleClicked
-            | QTreeWidget.EditTrigger.EditKeyPressed
+            QTreeWidget.EditTrigger.DoubleClicked | QTreeWidget.EditTrigger.EditKeyPressed
         )
 
         self.tree.itemChanged.connect(self.item_changed)
@@ -765,9 +750,7 @@ class TuFacWindow(QMainWindow):
         self.account_title = QLabel("Select an account")
         self.account_title.setWordWrap(True)
         self.account_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.account_title.setStyleSheet(
-            "font-size: 26px; font-weight: bold; color: #ffffff;"
-        )
+        self.account_title.setStyleSheet("font-size: 26px; font-weight: bold; color: #ffffff;")
 
         self.account_info = QLabel("Select an account from the tree.")
         self.account_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -789,9 +772,7 @@ class TuFacWindow(QMainWindow):
 
         self.brand_title = QLabel(f"{APP_NAME} {APP_VERSION}")
         self.brand_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.brand_title.setStyleSheet(
-            "font-size: 34px; font-weight: bold; color: #ffffff;"
-        )
+        self.brand_title.setStyleSheet("font-size: 34px; font-weight: bold; color: #ffffff;")
 
         self.brand_copyright = QLabel(APP_COPYRIGHT)
         self.brand_copyright.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -846,9 +827,7 @@ class TuFacWindow(QMainWindow):
         account_layout.addWidget(self.otp_code)
         account_layout.addWidget(self.otp_remaining)
         account_layout.addSpacing(8)
-        account_layout.addWidget(
-            self.copy_code_button, alignment=Qt.AlignmentFlag.AlignCenter
-        )
+        account_layout.addWidget(self.copy_code_button, alignment=Qt.AlignmentFlag.AlignCenter)
         account_layout.addStretch()
 
         self.detail_stack = QStackedWidget()
@@ -938,10 +917,10 @@ class TuFacWindow(QMainWindow):
     def load_tree(self):
         self.tree.blockSignals(True)
         self.tree.clear()
-    
+
         for group in self.data.get("groups", []):
             group_item = self.create_tree_item(group.get("name", "Unnamed Group"))
-            
+
             # Restore color as icon if exists
             if "color" in group:
                 color = QColor(group["color"])
@@ -958,23 +937,18 @@ class TuFacWindow(QMainWindow):
                 group_item.setData(0, Qt.ItemDataRole.UserRole, group["color"])
             else:
                 group_item.setIcon(0, QIcon())
-            
-            group_item.setText(0, group.get('name', 'Unnamed Group'))
+
+            group_item.setText(0, group.get("name", "Unnamed Group"))
             self.tree.addTopLevelItem(group_item)
-    
+
             # Sort accounts alphanumerically by name before adding to tree
-            accounts = sorted(
-                group.get("accounts", []),
-                key=lambda a: a.get("name", "").lower()
-            )
-    
+            accounts = sorted(group.get("accounts", []), key=lambda a: a.get("name", "").lower())
+
             for account in accounts:
-                account_item = self.create_account_tree_item(
-                    account.get("name", "Unnamed Account")
-                )
+                account_item = self.create_account_tree_item(account.get("name", "Unnamed Account"))
                 account_item.setData(0, Qt.ItemDataRole.UserRole, account)
                 group_item.addChild(account_item)
-    
+
         self.tree.blockSignals(False)
 
     def save_data(self):
@@ -999,9 +973,8 @@ class TuFacWindow(QMainWindow):
         # Clear selection to prevent context menu from reopening
         self.tree.clearSelection()
         self.tree.setCurrentItem(None)
-    
+
     def add_account(self):
-        
         if not self.tree.selectedItems():
             QMessageBox.information(self, APP_NAME, "Please select a group first.")
             return
@@ -1046,7 +1019,7 @@ class TuFacWindow(QMainWindow):
         menu.close()
         menu.deleteLater()
         QTimer.singleShot(0, self.rename_selected)
-    
+
     def rename_selected(self):
         if not self.tree.selectedItems():
             return
@@ -1054,11 +1027,11 @@ class TuFacWindow(QMainWindow):
         item = self.tree.currentItem()
         if item is not None:
             self.tree.editItem(item, 0)
-    
+
     def rename_selected_group(self):
         if not self.tree.selectedItems():
             return
-        
+
         item = self.tree.currentItem()
         if item is not None and item.parent() is None:
             self.tree.editItem(item, 0)
@@ -1112,9 +1085,7 @@ class TuFacWindow(QMainWindow):
         box.setWindowTitle(APP_NAME)
         box.setIconPixmap(question_icon())
         box.setText(text)
-        box.setStandardButtons(
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         box.setDefaultButton(QMessageBox.StandardButton.No)
         return box.exec() == QMessageBox.StandardButton.Yes
 
@@ -1138,7 +1109,7 @@ class TuFacWindow(QMainWindow):
         del self.data["groups"][index]
         self.tree.takeTopLevelItem(index)
         self.save_data()
-        
+
         # Clear selection to prevent context menu from reopening
         self.tree.clearSelection()
         self.tree.setCurrentItem(None)
@@ -1179,7 +1150,7 @@ class TuFacWindow(QMainWindow):
         item = self.tree.itemAt(position)
         selected_items = self.tree.selectedItems()
         selected_accounts = [it for it in selected_items if it.parent() is not None]
-        
+
         menu = QMenu(self)
 
         # No accounts selected - show regular menu
@@ -1191,58 +1162,58 @@ class TuFacWindow(QMainWindow):
                 action = menu.addAction("Add Account...")
                 action.triggered.connect(self.add_account)
                 menu.addSeparator()
-                
+
                 action = menu.addAction("Rename")
                 action.triggered.connect(lambda: self.rename_selected_with_close(menu))
-                
+
                 # Color submenu for groups
                 color_menu = menu.addMenu("Color")
                 set_color_action = color_menu.addAction("Set Color...")
                 set_color_action.triggered.connect(self.set_group_color)
-                
+
                 if item.data(0, Qt.ItemDataRole.UserRole) is not None:
                     remove_color_action = color_menu.addAction("Remove Color")
                     remove_color_action.triggered.connect(self.remove_group_color)
-                
+
                 menu.addSeparator()
                 action = menu.addAction("Delete")
                 action.triggered.connect(self.delete_selected_group)
             else:
                 action = menu.addAction("Edit Account...")
                 action.triggered.connect(self.edit_account)
-                
+
                 action = menu.addAction("Rename")
                 action.triggered.connect(lambda: self.rename_selected_with_close(menu))
-                
+
                 menu.addSeparator()
                 action = menu.addAction("Delete")
                 action.triggered.connect(self.delete_selected_account)
-            
+
             menu.popup(self.tree.viewport().mapToGlobal(position))
             return
-    
+
         # Accounts selected - show group creation option
         action = menu.addAction(f"Create Group from {len(selected_accounts)} Account(s)")
         action.triggered.connect(self.create_group_from_selected)
-        
+
         menu.addSeparator()
-        
+
         if len(selected_accounts) == 1:
             action = menu.addAction("Edit Account...")
             action.triggered.connect(self.edit_account)
-            
+
             action = menu.addAction("Rename")
             action.triggered.connect(lambda: self.rename_selected_with_close(menu))
-            
+
             menu.addSeparator()
             action = menu.addAction("Delete")
             action.triggered.connect(self.delete_selected_account)
         else:
             action = menu.addAction(f"Delete {len(selected_accounts)} Accounts")
             action.triggered.connect(self.delete_multiple_accounts)
-        
+
         menu.popup(self.tree.viewport().mapToGlobal(position))
-        
+
     def set_detail_visible(self, visible):
         self.account_title.setVisible(visible)
         self.account_info.setVisible(visible)
@@ -1383,9 +1354,7 @@ class TuFacWindow(QMainWindow):
             return
 
         if not accounts:
-            QMessageBox.warning(
-                self, APP_NAME, "No Google Authenticator accounts were found."
-            )
+            QMessageBox.warning(self, APP_NAME, "No Google Authenticator accounts were found.")
             return
 
         group_name = self.unique_group_name("Imported Accounts")
@@ -1449,9 +1418,7 @@ class TuFacWindow(QMainWindow):
         group_item.setExpanded(True)
         self.tree.setCurrentItem(group_item)
 
-        QMessageBox.information(
-            self, APP_NAME, f"Imported {len(group['accounts'])} account(s)."
-        )
+        QMessageBox.information(self, APP_NAME, f"Imported {len(group['accounts'])} account(s).")
 
     def export_accounts(self):
         filename, _ = QFileDialog.getSaveFileName(
@@ -1515,9 +1482,7 @@ class TuFacWindow(QMainWindow):
                 )
                 return
 
-        if not isinstance(imported, dict) or not isinstance(
-            imported.get("groups"), list
-        ):
+        if not isinstance(imported, dict) or not isinstance(imported.get("groups"), list):
             QMessageBox.warning(self, APP_NAME, "The file is not a valid TuFac backup.")
             return
 
@@ -1527,14 +1492,12 @@ class TuFacWindow(QMainWindow):
         for group in imported["groups"]:
             if not isinstance(group, dict):
                 continue
-        
+
             group_name = group.get("name", "Unnamed Group")
             accounts = [
-                account
-                for account in group.get("accounts", [])
-                if isinstance(account, dict)
+                account for account in group.get("accounts", []) if isinstance(account, dict)
             ]
-        
+
             existing = next(
                 (
                     existing_group
@@ -1543,30 +1506,27 @@ class TuFacWindow(QMainWindow):
                 ),
                 None,
             )
-        
+
             if existing is None:
                 # New group - copy everything including color
-                new_group = {
-                    "name": group_name,
-                    "accounts": list(accounts)
-                }
+                new_group = {"name": group_name, "accounts": list(accounts)}
                 if "color" in group:
                     new_group["color"] = group["color"]
                 self.data["groups"].append(new_group)
                 added_groups += 1
                 added_accounts += len(accounts)
                 continue
-        
+
             # Existing group - merge accounts and ALWAYS update color from backup
             existing_accounts = existing.setdefault("accounts", [])
             before = len(existing_accounts)
-        
+
             for account in accounts:
                 if account not in existing_accounts:
                     existing_accounts.append(account)
-        
+
             added_accounts += len(existing_accounts) - before
-            
+
             # Always update color from backup (overwrite)
             if "color" in group:
                 existing["color"] = group["color"]
@@ -1594,34 +1554,34 @@ class TuFacWindow(QMainWindow):
 
     def rebuild_data_from_tree(self):
         groups = []
-        
+
         for index in range(self.tree.topLevelItemCount()):
             group_item = self.tree.topLevelItem(index)
-            
+
             accounts = []
-            
+
             for child_index in range(group_item.childCount()):
                 account_item = group_item.child(child_index)
                 account = account_item.data(0, Qt.ItemDataRole.UserRole)
-                
+
                 if account is not None:
                     accounts.append(account)
-            
+
             # Sort accounts alphanumerically by name
             accounts.sort(key=lambda a: a.get("name", "").lower())
-            
+
             group_data = {
                 "name": group_item.text(0).strip() or "Unnamed Group",
                 "accounts": accounts,
             }
-            
+
             # Preserve color if exists
             color = group_item.data(0, Qt.ItemDataRole.UserRole)
             if color:
                 group_data["color"] = color
-            
+
             groups.append(group_data)
-        
+
         self.data["groups"] = groups
 
     def after_tree_drop(self):
@@ -1631,17 +1591,17 @@ class TuFacWindow(QMainWindow):
             color_data = group_item.data(0, Qt.ItemDataRole.UserRole)
             if color_data and index < len(self.data["groups"]):
                 self.data["groups"][index]["color"] = color_data
-        
+
         self.rebuild_data_from_tree()
-        
+
         # Re-sort accounts within each group after drag & drop
         for group_index in range(len(self.data["groups"])):
             accounts = self.data["groups"][group_index].get("accounts", [])
             accounts.sort(key=lambda a: a.get("name", "").lower())
-        
+
         # Refresh the tree to show sorted order
         self.load_tree()
-        
+
         self.save_data()
 
     def show_about(self):
@@ -1654,9 +1614,7 @@ class TuFacWindow(QMainWindow):
 
         self.status_counts = QLabel()
         self.status_counts.setStyleSheet("color: #a8a8a8;")
-        self.status_counts.setAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        )
+        self.status_counts.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.statusBar().addWidget(self.status_counts)
 
         self.status_encrypted = QLabel("Encrypted")
@@ -1675,9 +1633,7 @@ class TuFacWindow(QMainWindow):
         group_word = "group" if len(groups) == 1 else "groups"
         account_word = "account" if accounts == 1 else "accounts"
 
-        self.status_counts.setText(
-            f"{len(groups)} {group_word}  \u00b7  {accounts} {account_word}"
-        )
+        self.status_counts.setText(f"{len(groups)} {group_word}  \u00b7  {accounts} {account_word}")
 
     def update_otp(self):
         item = self.tree.currentItem()

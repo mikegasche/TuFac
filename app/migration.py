@@ -190,9 +190,7 @@ def decode_migration_url(value):
 
 
 def _build_otp(account):
-    secret = base64.b32decode(
-        account["secret"].upper() + "=" * (-len(account["secret"]) % 8)
-    )
+    secret = base64.b32decode(account["secret"].upper() + "=" * (-len(account["secret"]) % 8))
 
     algorithm = {
         "SHA1": 1,
