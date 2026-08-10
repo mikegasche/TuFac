@@ -73,7 +73,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install PySide6 pyinstaller opencv-python zxing-cpp pyotp cryptography
+          python -m pip install PySide6-Essentials pyinstaller opencv-python zxing-cpp pyotp cryptography
 
       - name: Build with PyInstaller
         run: |
@@ -84,21 +84,11 @@ jobs:
             --add-data "app/resources:resources" \
             app/tufac.py
 
-      - name: Thin binaries to single architecture
-        shell: bash
-        run: |
-          if [ "${{ matrix.arch }}" = "x86_64" ]; then THIN="x86_64"; else THIN="arm64"; fi
-          find dist/TuFac.app -type f | while read -r f; do
-            if lipo -info "$f" 2>/dev/null | grep -qE "$THIN" && lipo -info "$f" 2>/dev/null | grep -q "arm64" && lipo -info "$f" 2>/dev/null | grep -q "x86_64"; then
-              lipo -thin "$THIN" -output "$f.thin" "$f" && mv "$f.thin" "$f"
-            fi
-          done
-
       - name: Zip .app bundle
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           cd dist
-          zip -r "TuFac-${VERSION}-macos-${{ matrix.arch }}.zip" TuFac.app
+          zip -r -y "TuFac-${VERSION}-macos-${{ matrix.arch }}.zip" TuFac.app
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
