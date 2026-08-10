@@ -75,7 +75,7 @@ python -m PyInstaller \
     --windowed \
     --icon "app/resources/app_icon.icns" \
     --add-data "app/resources:resources" \
-    app/tufac_gui.py
+    app/tufac.py
 
 echo ""
 echo "==> Build finished."
