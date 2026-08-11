@@ -50,6 +50,7 @@ WINDOW = "#1e1e1e"
 PANEL = "#191919"
 FIELD = "#262626"
 BORDER = "#3a3a3a"
+BACKGROUND_MENU = "#323232"
 TEXT = "#ffffff"
 TEXT_MUTED = "#a8a8a8"
 TREE_ACCOUNT = "#b8b8b8"
@@ -184,7 +185,7 @@ QHeaderView::section {{
 }}
 
 QMenuBar {{
-    background-color: {WINDOW};
+    background-color: {BACKGROUND_MENU};
     color: {TEXT};
 }}
 
@@ -194,7 +195,8 @@ QMenuBar::item {{
 }}
 
 QMenuBar::item:selected {{
-    background-color: {FIELD};
+    background-color: {ACCENT};
+    color: {TEXT};
 }}
 
 QMenu {{

@@ -67,6 +67,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QStatusBar,
     QStyledItemDelegate,
+    QStyleFactory,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -857,7 +858,16 @@ class TuFacWindow(QMainWindow):
     def create_menu(self):
         menu_bar = self.menuBar()
 
-        file_menu = menu_bar.addMenu("&File")
+        if TRAY_MODE and sys.platform == "darwin":
+            menu_bar.setNativeMenuBar(False)
+            menu_bar.setStyle(QStyleFactory.create("Fusion"))
+
+        def label(text):
+            if TRAY_MODE and sys.platform == "darwin":
+                return text.replace("&", "")
+            return text
+
+        file_menu = menu_bar.addMenu(label("&File"))
 
         import_action = QAction("Import from QR Codes...", self)
         import_action.triggered.connect(self.import_accounts)
@@ -885,7 +895,7 @@ class TuFacWindow(QMainWindow):
         quit_action.triggered.connect(self.quit_app)
         file_menu.addAction(quit_action)
 
-        groups_menu = menu_bar.addMenu("&Groups")
+        groups_menu = menu_bar.addMenu(label("&Groups"))
 
         add_group_action = QAction("New Group", self)
         add_group_action.setShortcut(QKeySequence("Ctrl+Shift+N"))
@@ -900,7 +910,7 @@ class TuFacWindow(QMainWindow):
         delete_group_action.triggered.connect(self.delete_selected_group)
         groups_menu.addAction(delete_group_action)
 
-        account_menu = menu_bar.addMenu("&Account")
+        account_menu = menu_bar.addMenu(label("&Account"))
 
         add_account_action = QAction("Add Account...", self)
         add_account_action.triggered.connect(self.add_account)
@@ -914,7 +924,7 @@ class TuFacWindow(QMainWindow):
         delete_account_action.triggered.connect(self.delete_selected_account)
         account_menu.addAction(delete_account_action)
 
-        help_menu = menu_bar.addMenu("&Help")
+        help_menu = menu_bar.addMenu(label("&Help"))
 
         about_action = QAction(f"About {APP_NAME}", self)
         about_action.triggered.connect(self.show_about)
