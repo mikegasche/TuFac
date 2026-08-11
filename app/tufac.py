@@ -31,6 +31,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 from style import apply_theme
 from tufac_gui import TuFacWindow, resource_path
 
+app = None
 window = None
 LOGGING = False
 
@@ -73,6 +74,7 @@ def create_tray():
         icon.setIsMask(True)
 
     tray = QSystemTrayIcon(icon, window)
+    tray.setToolTip(APP_NAME)
 
     menu = QMenu(window)
 
@@ -87,7 +89,7 @@ def create_tray():
     menu.addSeparator()
 
     quit_action = QAction("Quit", menu)
-    quit_action.triggered.connect(QApplication.instance().quit)
+    quit_action.triggered.connect(window.quit_app)
     menu.addAction(quit_action)
 
     tray.setContextMenu(menu)
@@ -102,6 +104,8 @@ def create_tray():
 
 
 def main():
+    global app, window
+
     app = QApplication(sys.argv)
 
     app.setApplicationName(APP_NAME)
@@ -122,7 +126,11 @@ def main():
     else:
         show_window()
 
-    sys.exit(app.exec())
+    ret = app.exec()
+
+    window = None
+
+    sys.exit(ret)
 
 
 if __name__ == "__main__":

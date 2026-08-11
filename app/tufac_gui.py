@@ -935,7 +935,7 @@ class TuFacWindow(QMainWindow):
 
     def quit_app(self):
         if TRAY_MODE:
-            QApplication.instance().quit()
+            QTimer.singleShot(0, QApplication.instance().quit)
         else:
             self.close()
 
