@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.0] - 2026-08-11
+
+### Added
+
+- Menu bar / system tray mode — TuFac starts in the tray; quit via the tray icon menu
+- Tray icon adapts automatically to light and dark mode (macOS)
+- Settings dialog with a "Start at login" option
+- No Dock icon on macOS when running in the tray
+
 ## [1.0.0] - 2026-08-10
 
 ### Added

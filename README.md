@@ -6,7 +6,7 @@
   TuFac manages your two-factor accounts locally, generates the one-time codes
   directly on your device and never sends anything to the network.
 
-  <img src="https://img.shields.io/badge/version-1.0.0-FFD54F">
+  <img src="https://img.shields.io/badge/version-1.1.0-FFD54F">
   <img src="https://img.shields.io/badge/license-AGPLv3-orange">
   <img src="https://img.shields.io/badge/python-3.14+-blue">
 
@@ -24,6 +24,7 @@
 - **Encrypted backup** — export/import backups protected by a passphrase (PBKDF2-derived key)
 - **Flexible accounts** — SHA1/SHA256/SHA512/MD5, 6 or 8 digits, configurable period (30s default)
 - **Dark theme** — consistent dark UI, native menus and shortcuts
+- **Menu bar / tray app** — runs in the macOS menu bar or Windows system tray; closing the window hides it, quit via the tray icon menu
 - **Platforms** — macOS (Intel & Apple Silicon) and Windows, as standalone binaries
 
 ## Screenshot
@@ -47,12 +48,17 @@ Get the latest version from the [GitHub Releases](https://github.com/mikegasche/
 
 Unzip the archive and drag `TuFac.app` into your Applications folder.
 The first time you open it, right-click the app and choose **Open** (macOS Gatekeeper).
+TuFac runs as a **menu bar app** — it does not appear in the Dock; open it via the tray icon.
 
 ### Windows
 
 Run the `.exe` — no installation required.
 
 ## Usage
+
+TuFac starts in your menu bar (macOS) or system tray (Windows). Click the tray icon to open
+the window; closing the window only hides the app. To quit TuFac completely, choose **Quit**
+in the tray icon menu. Under **Settings…** you can enable **Start at login**.
 
 Create a group, add an account with its base32 secret, and select it to see the
 current TOTP code with live countdown. Use **Copy Code** to copy it to the clipboard.

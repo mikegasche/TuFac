@@ -23,6 +23,13 @@
 
 
 APP_NAME = "TuFac"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 APP_COPYRIGHT = "© 2026 Michael Gasche"
 GITHUB_LINK = "github.com/mikegasche"
+
+# Start as a menu bar / system tray app instead of a regular windowed app.
+# Closing the window then only hides it; quit via the tray icon menu.
+TRAY_MODE = True
+
+# LaunchAgent label used for macOS auto-start.
+LAUNCH_AGENT_LABEL = "ch.autumo.tufac"

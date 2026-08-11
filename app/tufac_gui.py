@@ -32,7 +32,7 @@ from pathlib import Path
 import cv2
 import pyotp
 import zxingcpp
-from config import APP_COPYRIGHT, APP_NAME, APP_VERSION, GITHUB_LINK
+from config import APP_COPYRIGHT, APP_NAME, APP_VERSION, GITHUB_LINK, TRAY_MODE
 from crypto import decrypt_backup, is_envelope
 from migration import decode_migration_url
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -72,6 +72,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from settings_dialog import SettingsDialog
 from storage import TuFacStorage
 from style import TREE_ACCOUNT, question_icon
 
@@ -544,6 +545,9 @@ class TuFacWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        if TRAY_MODE and sys.platform == "win32":
+            self.setWindowFlag(Qt.WindowType.Tool)
+
         self.setWindowTitle(f"{APP_NAME} {APP_VERSION}")
         self.resize(1000, 650)
 
@@ -869,9 +873,16 @@ class TuFacWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        settings_action = QAction("Settings...", self)
+        settings_action.setShortcut(QKeySequence.Preferences)
+        settings_action.triggered.connect(self.open_settings)
+        file_menu.addAction(settings_action)
+
+        file_menu.addSeparator()
+
         quit_action = QAction("Quit", self)
         quit_action.setShortcut(QKeySequence.Quit)
-        quit_action.triggered.connect(self.close)
+        quit_action.triggered.connect(self.quit_app)
         file_menu.addAction(quit_action)
 
         groups_menu = menu_bar.addMenu("&Groups")
@@ -908,6 +919,22 @@ class TuFacWindow(QMainWindow):
         about_action = QAction(f"About {APP_NAME}", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
+
+    def open_settings(self):
+        SettingsDialog(self).exec()
+
+    def quit_app(self):
+        if TRAY_MODE:
+            QApplication.instance().quit()
+        else:
+            self.close()
+
+    def closeEvent(self, event):
+        if TRAY_MODE:
+            event.ignore()
+            self.hide()
+        else:
+            super().closeEvent(event)
 
     def create_tree_item(self, text):
         item = QTreeWidgetItem([text])

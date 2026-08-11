@@ -81,8 +81,17 @@ jobs:
             --name "TuFac" \
             --windowed \
             --icon "app/resources/app_icon.icns" \
+            --osx-bundle-identifier "ch.autumo.tufac" \
             --add-data "app/resources:resources" \
             app/tufac.py
+
+      - name: Apply LSUIElement for tray mode
+        run: |
+          if grep -q "TRAY_MODE = True" app/config.py; then
+            plutil -insert LSUIElement -bool true dist/TuFac.app/Contents/Info.plist \
+              || plutil -replace LSUIElement -bool true dist/TuFac.app/Contents/Info.plist
+            codesign --force --deep --sign - dist/TuFac.app
+          fi
 
       - name: Zip .app bundle
         run: |

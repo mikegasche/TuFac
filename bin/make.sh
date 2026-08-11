@@ -74,8 +74,22 @@ python -m PyInstaller \
     --name "TuFac" \
     --windowed \
     --icon "app/resources/app_icon.icns" \
+    --osx-bundle-identifier "ch.autumo.tufac" \
     --add-data "app/resources:resources" \
     app/tufac.py
+
+# --- 8. Apply LSUIElement for tray mode ---
+
+if grep -q "TRAY_MODE = True" app/config.py; then
+    echo "==> Applying LSUIElement for tray mode..."
+
+    PLIST="dist/TuFac.app/Contents/Info.plist"
+
+    plutil -insert LSUIElement -bool true "$PLIST" 2>/dev/null \
+        || plutil -replace LSUIElement -bool true "$PLIST"
+
+    codesign --force --deep --sign - dist/TuFac.app
+fi
 
 echo ""
 echo "==> Build finished."
