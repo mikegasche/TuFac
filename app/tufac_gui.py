@@ -35,7 +35,7 @@ import zxingcpp
 from config import APP_COPYRIGHT, APP_NAME, APP_VERSION, GITHUB_LINK, TRAY_MODE
 from crypto import decrypt_backup, is_envelope
 from migration import decode_migration_url
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QPoint, QTimer, Signal
 from PySide6.QtGui import (
     QAction,
     QBrush,
@@ -75,7 +75,7 @@ from PySide6.QtWidgets import (
 )
 from settings_dialog import SettingsDialog
 from storage import TuFacStorage
-from style import TREE_ACCOUNT, question_icon
+from style import BRANCH_DOT, BRANCH_DOT_RADIUS, BRANCH_SHIFT, TREE_ACCOUNT, question_icon
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 RESOURCE_DIR = PROJECT_ROOT / "resources"
@@ -182,6 +182,28 @@ class AccountTree(QTreeWidget):
         self.itemChanged.connect(parent.item_changed)
         self.itemSelectionChanged.connect(parent.selection_changed)
         self.dropped.connect(parent.after_tree_drop)
+
+    def drawBranches(self, painter, rect, index):
+        painter.save()
+        painter.translate(BRANCH_SHIFT, 0)
+        super().drawBranches(painter, rect, index)
+        painter.restore()
+
+    def drawRow(self, painter, option, index):
+        super().drawRow(painter, option, index)
+        if not self.model().hasChildren(index):
+            level = 0
+            parent = index.parent()
+            while parent.isValid():
+                level += 1
+                parent = parent.parent()
+            x = self.indentation() * level + self.indentation() // 2 + BRANCH_SHIFT
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(BRANCH_DOT))
+            painter.drawEllipse(QPoint(x, option.rect.center().y()), BRANCH_DOT_RADIUS, BRANCH_DOT_RADIUS)
+            painter.restore()
 
     def startDrag(self, actions):
         # Allow dragging both groups and accounts
@@ -1107,6 +1129,7 @@ class TuFacWindow(QMainWindow):
                 accounts[account_index]["name"] = name
 
         self.save_data()
+        self.selection_changed()
 
     def delete_selected(self):
         if not self.tree.selectedItems():

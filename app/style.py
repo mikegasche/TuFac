@@ -24,6 +24,7 @@
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainter, QPalette, QPixmap
+from PySide6.QtWidgets import QStyleFactory
 
 
 def question_icon(size=48):
@@ -53,7 +54,11 @@ BORDER = "#3a3a3a"
 BACKGROUND_MENU = "#323232"
 TEXT = "#ffffff"
 TEXT_MUTED = "#a8a8a8"
+TREE_TEXT = "#d8d8d8"
 TREE_ACCOUNT = "#b8b8b8"
+BRANCH_SHIFT = 2
+BRANCH_DOT = "#a0a0a0"
+BRANCH_DOT_RADIUS = 3
 TITLE = "#abd0da"
 
 APP_STYLE = f"""
@@ -157,7 +162,7 @@ QPushButton#iconButton {{
 QTreeWidget {{
     background-color: {WINDOW};
     border: none;
-    color: {TEXT};
+    color: {TREE_TEXT};
     font-size: 14px;
     outline: none;
     padding-top: 4px;
@@ -316,4 +321,5 @@ def create_palette():
 
 def apply_theme(app):
     app.setPalette(create_palette())
+    app.setStyle(QStyleFactory.create("Fusion"))
     app.setStyleSheet(APP_STYLE)

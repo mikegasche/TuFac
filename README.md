@@ -6,7 +6,7 @@
   TuFac manages your two-factor accounts locally, generates the one-time codes
   directly on your device and never sends anything to the network.
 
-  <img src="https://img.shields.io/badge/version-1.1.0-FFD54F">
+  <img src="https://img.shields.io/badge/version-1.2.0-FFD54F">
   <img src="https://img.shields.io/badge/license-AGPLv3-orange">
   <img src="https://img.shields.io/badge/python-3.14+-blue">
 
