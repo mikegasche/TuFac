@@ -2,6 +2,24 @@
 
 ## [1.2.0] - 2026-08-13
 
+### Added
+
+- In-window menu bar for macOS tray mode (Fusion-styled, matches the dark theme)
+- Tray icon tooltip with the app name
+- Small dot indicator before account (leaf) entries in the tree, matching the group disclosure arrow
+
+### Fixed
+
+- Rare segfault when quitting from the tray icon
+- Account detail view not updating the name immediately after renaming in the tree
+- Black disclosure arrows on Windows (dark theme)
+
+### Changed
+
+- App-wide Fusion style for a consistent dark theme across macOS and Windows
+- Tree disclosure arrows and dot indicators rendered in the tree text color
+- Removed PyObjC dependency in macOS tray mode
+
 ## [1.1.0] - 2026-08-11
 
 ### Added
